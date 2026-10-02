@@ -1,0 +1,33 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{db}/documents {
+    function isAdmin() { return request.auth != null && exists(/databases/$(db)/documents/admins/$(request.auth.uid)); }
+    function S() { return get(/databases/$(db)/documents/settings/store).data; }
+
+    match /admins/{uid} { allow read: if request.auth != null && request.auth.uid == uid; allow write: if false; } // create docs manually in console
+    match /settings/{d} { allow read: if true; allow write: if isAdmin(); }
+    match /products/{id} {
+      allow read: if resource.data.active == true || isAdmin();
+      allow write: if isAdmin();
+    }
+    match /orders/{id} {
+      allow read, update, delete: if isAdmin();
+      // Customers may only CREATE; price/total are re-checked against trusted product + settings data.
+      allow create: if request.resource.data.keys().hasOnly(['id','name','phone','district','address','productId','productName','qty','price','delivery','total','location','note','status','payment','createdAt'])
+        && request.resource.data.id == id
+        && request.resource.data.name is string && request.resource.data.name.size() > 1 && request.resource.data.name.size() < 80
+        && request.resource.data.phone.matches('^(\\+?880|0)1[3-9][0-9]{8}$')
+        && request.resource.data.address is string && request.resource.data.address.size() > 5 && request.resource.data.address.size() < 300
+        && request.resource.data.note.size() < 300
+        && request.resource.data.qty is int && request.resource.data.qty >= 1 && request.resource.data.qty <= 20
+        && request.resource.data.status == 'Pending'
+        && request.resource.data.payment == 'Cash on Delivery'
+        && request.resource.data.createdAt == request.time
+        && get(/databases/$(db)/documents/products/$(request.resource.data.productId)).data.active == true
+        && request.resource.data.price == get(/databases/$(db)/documents/products/$(request.resource.data.productId)).data.price
+        && request.resource.data.productName == get(/databases/$(db)/documents/products/$(request.resource.data.productId)).data.name
+        && request.resource.data.delivery == (request.resource.data.location == 'inside' ? S().deliveryInside : S().deliveryOutside)
+        && request.resource.data.total == request.resource.data.price * request.resource.data.qty + request.resource.data.delivery;
+    }
+  }
+}
